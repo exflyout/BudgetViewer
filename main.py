@@ -80,8 +80,8 @@ def check_for_updates(current_version: str, parent=None):
     import urllib.request
     import json
     
-    # 예시 URL (추후 사용자의 GitHub gist 또는 raw content 주소로 변경)
-    UPDATE_URL = "https://raw.githubusercontent.com/username/repo/main/version.json"
+    # 💡 실제 사용자의 GitHub 저장소 내 version.json 주소로 변경
+    UPDATE_URL = "https://raw.githubusercontent.com/exflyout/BudgetViewer/main/version.json"
     
     try:
         # 💡 실제 네트워크 연결 시 타임아웃을 짧게 설정하여 사용자 대기 최소화

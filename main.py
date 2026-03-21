@@ -50,7 +50,7 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-APP_VERSION = "1.0"
+APP_VERSION = "1.2"
 APP_TITLE = f"예산현액 뷰어 (v{APP_VERSION}) — 일상경비교부액"
 
 
@@ -435,10 +435,19 @@ class ManualDialog(QDialog):
         # 💡 [핵심] 하단에 Stretch를 추가하여 위의 모든 요소가 위로 밀집되게 함
         root.addStretch(1)
 
-        # 💡 버전 정보 표시
+        # 💡 버전 및 문의 정보 표시
+        contact_layout = QVBoxLayout()
+        contact_layout.setSpacing(2)
+        
         version_label = QLabel(f"Version {APP_VERSION}")
         version_label.setStyleSheet("color: #94a3b8; font-size: 11px;")
-        root.addWidget(version_label, alignment=Qt.AlignLeft)
+        
+        contact_label = QLabel("이용문의: 고종훈 (exflyout@ice.go.kr)")
+        contact_label.setStyleSheet("color: #64748b; font-size: 11px; font-weight: bold;")
+        
+        contact_layout.addWidget(version_label)
+        contact_layout.addWidget(contact_label)
+        root.addLayout(contact_layout)
 
         btn_close = QPushButton("닫기")
         btn_close.clicked.connect(self.accept)

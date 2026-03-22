@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+import re
+from typing import Dict, List, Optional, Tuple, Any
 
 import pandas as pd
 import re
@@ -30,6 +31,7 @@ class ParseResult:
     budget_codes: List[Tuple[str, str]]
     totals: Dict[str, float]
     analysis_summary: Dict[str, int]
+    money_columns: List[str] = None
 
 
 @dataclass
@@ -283,20 +285,37 @@ def load_and_parse_excel(path: str) -> ParseResult:
         raise ValueError("이 파일에서 '사업항목' 컬럼을 찾지 못했습니다.")
 
     cost_col = _find_col_loose(columns, ["원가통계비목"]) or _find_col_loose(columns, ["원가", "비목"])
-    grant_col = _find_col_loose(columns, ["일상경비교부액", "교부액"]) or _find_col_loose(columns, ["교부액"])
-    spent_col = _find_col_loose(columns, ["일상경비교부액", "지출액"]) or _find_col_loose(columns, ["지출액"])
-    bal_col = (
-        _find_col_loose(columns, ["일상경비교부액", "교부잔액"])
-        or _find_col_loose(columns, ["일상경비교부액", "잔액"])
-        or _find_col_loose(columns, ["교부잔액"])
-        or _find_col_loose(columns, ["잔액"])
-    )
-    budget_col = _find_col_loose(columns, ["예산현액"])
 
-    if not grant_col:
-        raise ValueError("교부액 컬럼을 찾지 못했습니다.")
-    if not spent_col:
-        raise ValueError("지출액 컬럼을 찾지 못했습니다.")
+    # --- 일상경비교부액 기준 동적 컬럼 식별 ---
+    money_cols_info = []
+    for c in columns:
+        if "일상경비교부액" in c:
+            disp = c.split("_")[-1]
+            disp = re.sub(r'\(.*?\)', '', disp).strip() # 괄호가 포함된 부가 설명 삭제 (예: 배부잔액(M=J-K) -> 배부잔액)
+            if disp == "교부잔액": 
+                disp = "잔액"
+            money_cols_info.append((c, disp))
+            
+    # 일상경비교부액이라는 상위 헤더가 없거나 텍스트가 깨져 못 찾은 경우 Fallback
+    if not money_cols_info:
+        for c in columns:
+            if any(k in c for k in ["원인행위액", "지출결의액", "지출결의잔액", "교부액", "지출액", "잔액", "채무확정액"]):
+                disp = c.split("_")[-1]
+                disp = re.sub(r'\(.*?\)', '', disp).strip()
+                if disp == "교부잔액": disp = "잔액"
+                money_cols_info.append((c, disp))
+
+    # 순서 유지하며 중복 제거
+    seen_disp = set()
+    final_money_cols = []
+    for orig_c, disp in money_cols_info:
+        if disp not in seen_disp:
+            seen_disp.add(disp)
+            final_money_cols.append((orig_c, disp))
+            
+    money_columns = [disp for _, disp in final_money_cols]
+    if not money_columns:
+        raise ValueError("일상경비교부액 관련 예상 열(원인행위액, 교부액, 지출액, 잔액 등)을 찾을 수 없습니다. 엑셀 형식을 확인해주세요.")
 
     out = data.copy()
     out["_raw_item"] = out[item_col].fillna("").astype(str).str.strip()
@@ -306,27 +325,26 @@ def load_and_parse_excel(path: str) -> ParseResult:
     else:
         out["원가통계비목"] = ""
 
-    out["_grant"] = _to_money(out[grant_col])
-    out["_spent"] = _to_money(out[spent_col])
-    out["_balance"] = _to_money(out[bal_col]) if bal_col and bal_col in out.columns else (out["_grant"] - out["_spent"])
-    out["_budget_total"] = _to_money(out[budget_col]) if budget_col and budget_col in out.columns else 0.0
+    # 식별된 동적 금액 컬럼들을 _money_ 접두사를 붙여 저장
+    for orig_c, disp in final_money_cols:
+        out[f"_money_{disp}"] = _to_money(out[orig_c])
+
+    # 0원 행 숨김 등의 처리를 위해 임시로 기존 로직과 호환성 유지용 변수 배정
+    grant_disp = next((d for d in money_columns if "교부액" in d), None)
+    spent_disp = next((d for d in money_columns if "지출액" in d), None)
+    bal_disp = next((d for d in money_columns if "잔액" in d), None)
+    
+    out["_grant"] = out[f"_money_{grant_disp}"] if grant_disp else 0.0
+    out["_spent"] = out[f"_money_{spent_disp}"] if spent_disp else 0.0
+    out["_balance"] = out[f"_money_{bal_disp}"] if bal_disp else 0.0
 
     is_total = out["_raw_item"].astype(str).str.strip().eq("소계")
     if is_total.any():
         tot_row = out.loc[is_total].iloc[-1]
-        totals = {
-            "grant": float(tot_row["_grant"]),
-            "spent": float(tot_row["_spent"]),
-            "balance": float(tot_row["_balance"]),
-            "budget_total": float(tot_row["_budget_total"]) if "_budget_total" in tot_row else 0.0,
-        }
+        totals = {disp: float(tot_row[f"_money_{disp}"]) for disp in money_columns}
     else:
-        totals = {
-            "grant": float(out["_grant"].sum()),
-            "spent": float(out["_spent"].sum()),
-            "balance": float(out["_balance"].sum()),
-            "budget_total": float(out["_budget_total"].sum()),
-        }
+        totals = {disp: float(out[f"_money_{disp}"].sum()) for disp in money_columns}
+
 
     code_col = _find_col_loose(columns, ["예산코드"])
     code_name_col = _find_col_loose(columns, ["예산코드명"])
@@ -455,4 +473,5 @@ def load_and_parse_excel(path: str) -> ParseResult:
         budget_codes=budget_codes,
         totals=totals,
         analysis_summary=analysis_summary,
+        money_columns=money_columns,
     )

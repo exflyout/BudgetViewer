@@ -1,5 +1,5 @@
 {
-    "version": "1.3",
-    "url": "https://github.com/exflyout/BudgetViewer/releases/latest",
-    "notes": "정식 v1.3 출시 (전문 보고서형 엑셀 내보내기 기능 탑재)"
+  "version": "1.4",
+  "url": "https://github.com/exflyout/BudgetViewer/releases/latest",
+  "release_notes": "v1.4 업데이트: 동적 예산 컬럼 로드 및 UI 표시 제어 필터 지원 (원인행위액, 지출결의액 등 P~U열 추가 지원)"
 }

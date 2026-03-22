@@ -24,8 +24,9 @@ def _collect_rows_with_depth(view: QTreeView) -> List[Tuple[List[Any], int]]:
             idx0 = model.index(r, 0, parent)
             row_vals = []
             for c in range(model.columnCount(parent)):
-                idx = model.index(r, c, parent)
-                row_vals.append(model.data(idx))
+                if not view.isColumnHidden(c):
+                    idx = model.index(r, c, parent)
+                    row_vals.append(model.data(idx))
             rows.append((row_vals, depth))
             walk(idx0, depth + 1)
 
@@ -40,7 +41,11 @@ def export_current_view_to_excel(view: QTreeView, path: str) -> None:
         raise ValueError("내보낼 데이터가 없습니다.")
 
     model = view.model()
-    headers = [model.headerData(i, view.header().orientation(), role=0) for i in range(model.columnCount())]
+    headers = [
+        model.headerData(i, view.header().orientation(), role=0)
+        for i in range(model.columnCount())
+        if not view.isColumnHidden(i)
+    ]
 
     wb = Workbook()
     ws = wb.active

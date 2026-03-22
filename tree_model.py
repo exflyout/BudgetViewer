@@ -86,15 +86,16 @@ class BuildOptions:
 
 
 class BudgetTreeBuilder:
-    HEADERS = ["항목", "원가통계비목", "예산현액", "교부액", "지출액", "잔액"]
-
-    def __init__(self, df: pd.DataFrame):
+    def __init__(self, df: pd.DataFrame, money_columns: List[str]):
         self.df = df.copy()
+        self.money_columns = money_columns
+        self.HEADERS = ["항목", "원가통계비목"] + self.money_columns
         self.business_key_col = "_biz_key_auto"
         self.business_display_col = "_biz_display_auto"
         self.business_level_col = "_biz_level_auto"
         self.base_font_size = 10
         self.hide_zero_rows = False # 상태 정보 보관
+
 
     def build_model(self, opt: BuildOptions) -> QStandardItemModel:
         model = QStandardItemModel()
@@ -140,16 +141,13 @@ class BudgetTreeBuilder:
                 continue
 
             l1_display = str(l1_df["_L1_display"].iloc[0])
-            l1_bgt, l1_g, l1_s, l1_b = self._block_totals(l1_df)
+            l1_totals = self._block_totals(l1_df)
             l1_item = self._section_item(l1_display, i)
-            root.appendRow([
-                l1_item,
-                self._blank("l1", _l1_bg(i)),
-                self._money_item(l1_bgt, kind="l1", bg=_l1_bg(i)),
-                self._money_item(l1_g, kind="l1", bg=_l1_bg(i)),
-                self._money_item(l1_s, kind="l1", bg=_l1_bg(i)),
-                self._money_item(l1_b, kind="l1", bg=_l1_bg(i)),
-            ])
+            
+            row_items = [l1_item, self._blank("l1", _l1_bg(i))]
+            for val in l1_totals:
+                row_items.append(self._money_item(val, kind="l1", bg=_l1_bg(i)))
+            root.appendRow(row_items)
 
             business_order = _appearance_order(l1_df[self.business_key_col].astype(str).tolist())
             for business_key in business_order:
@@ -159,32 +157,25 @@ class BudgetTreeBuilder:
 
                 biz_display = str(biz_df[self.business_display_col].iloc[0])
                 biz_kind = self._business_kind(int(biz_df[self.business_level_col].iloc[0]))
-                biz_bgt, biz_g, biz_s, biz_b = self._block_totals(biz_df)
+                biz_totals = self._block_totals(biz_df)
                 biz_item = self._mid_item(f"○ {biz_display}", kind=biz_kind)
 
-                # ✅ 중복 제거 대상 이름 추출 (4세부: / 뒤쪽, 3세부: 전체)
                 identity_to_skip = biz_display.split(" / ")[-1].strip() if " / " in biz_display else biz_display.strip()
 
-                l1_item.appendRow([
-                    biz_item,
-                    self._blank(biz_kind),
-                    self._money_item(biz_bgt, kind=biz_kind),
-                    self._money_item(biz_g, kind=biz_kind),
-                    self._money_item(biz_s, kind=biz_kind),
-                    self._money_item(biz_b, kind=biz_kind),
-                ])
+                row_items = [biz_item, self._blank(biz_kind)]
+                for val in biz_totals:
+                    row_items.append(self._money_item(val, kind=biz_kind))
+                l1_item.appendRow(row_items)
 
                 for code, code_name, block_df in self._split_code_blocks(biz_df):
-                    code_bgt, code_g, code_s, code_bal = self._block_totals(block_df)
+                    code_totals = self._block_totals(block_df)
                     code_item = self._code_item(code, code_name)
-                    biz_item.appendRow([
-                        code_item,
-                        self._blank("code", _code_bg()),
-                        self._money_item(code_bgt, kind="code", bg=_code_bg()),
-                        self._money_item(code_g, kind="code", bg=_code_bg()),
-                        self._money_item(code_s, kind="code", bg=_code_bg()),
-                        self._money_item(code_bal, kind="code", bg=_code_bg()),
-                    ])
+                    
+                    row_items = [code_item, self._blank("code", _code_bg())]
+                    for val in code_totals:
+                        row_items.append(self._money_item(val, kind="code", bg=_code_bg()))
+                    biz_item.appendRow(row_items)
+                    
                     self._append_block_rows(code_item, block_df, identity_to_skip=identity_to_skip)
 
     def _build_code_first(self, model: QStandardItemModel, df: pd.DataFrame):
@@ -196,16 +187,13 @@ class BudgetTreeBuilder:
             if code_df.empty:
                 continue
 
-            code_total_bgt, code_total_g, code_total_s, code_total_b = self._grouped_totals(code_df, self.business_key_col)
+            code_totals = self._grouped_totals(code_df, self.business_key_col)
             code_item = self._section_item(f"[{code}] {code_name}".strip(), i)
-            root.appendRow([
-                code_item,
-                self._blank("l1", _l1_bg(i)),
-                self._money_item(code_total_bgt, kind="l1", bg=_l1_bg(i)),
-                self._money_item(code_total_g, kind="l1", bg=_l1_bg(i)),
-                self._money_item(code_total_s, kind="l1", bg=_l1_bg(i)),
-                self._money_item(code_total_b, kind="l1", bg=_l1_bg(i)),
-            ])
+            
+            row_items = [code_item, self._blank("l1", _l1_bg(i))]
+            for val in code_totals:
+                row_items.append(self._money_item(val, kind="l1", bg=_l1_bg(i)))
+            root.appendRow(row_items)
 
             l1_order = _appearance_order(code_df["_L1_key"].astype(str).tolist())
             for l1_key in l1_order:
@@ -215,13 +203,9 @@ class BudgetTreeBuilder:
 
                 l1_display = str(l1_df["_L1_display"].iloc[0])
                 l1_item = self._mid_item(l1_display, kind="l2")
-                code_item.appendRow([
-                    l1_item,
-                    self._blank("l2"),
-                    self._blank("l2"),
-                    self._blank("l2"),
-                    self._blank("l2"),
-                ])
+                
+                row_items = [l1_item, self._blank("l2")] + [self._blank("l2") for _ in self.money_columns]
+                code_item.appendRow(row_items)
 
                 business_order = _appearance_order(l1_df[self.business_key_col].astype(str).tolist())
                 for business_key in business_order:
@@ -234,35 +218,24 @@ class BudgetTreeBuilder:
                     child_kind = "subbiz" if biz_kind == "subbiz" else "l3"
                     biz_item = self._mid_item(f"○ {biz_display}", kind=child_kind)
 
-                    # ✅ 중복 제거 대상 이름 추출
                     identity_to_skip = biz_display.split(" / ")[-1].strip() if " / " in biz_display else biz_display.strip()
 
-                    l1_item.appendRow([
-                        biz_item,
-                        self._blank(child_kind),
-                        self._blank(child_kind),
-                        self._blank(child_kind),
-                        self._blank(child_kind),
-                        self._blank(child_kind),
-                    ])
+                    row_items = [biz_item, self._blank(child_kind)] + [self._blank(child_kind) for _ in self.money_columns]
+                    l1_item.appendRow(row_items)
+                    
                     self._append_block_rows(biz_item, biz_df, identity_to_skip=identity_to_skip)
 
     def _business_kind(self, business_level: int) -> str:
         return "subbiz" if int(business_level) >= 4 else "l2"
 
-    def _grouped_totals(self, df: pd.DataFrame, key_col: str) -> Tuple[float, float, float, float]:
-        total_bgt = 0.0
-        total_g = 0.0
-        total_s = 0.0
-        total_b = 0.0
+    def _grouped_totals(self, df: pd.DataFrame, key_col: str) -> List[float]:
+        total_list = [0.0] * len(self.money_columns)
         for key in _appearance_order(df[key_col].astype(str).tolist()):
             gdf = df[df[key_col].astype(str) == key].copy()
-            bgt, g, s, b = self._block_totals(gdf)
-            total_bgt += bgt
-            total_g += g
-            total_s += s
-            total_b += b
-        return total_bgt, total_g, total_s, total_b
+            bgt_list = self._block_totals(gdf)
+            for j in range(len(total_list)):
+                total_list[j] += bgt_list[j]
+        return total_list
 
     def _code_order(self, df: pd.DataFrame) -> List[Tuple[str, str]]:
         seen = set()
@@ -302,17 +275,12 @@ class BudgetTreeBuilder:
             out.append((current_code or "", current_name or "", pd.DataFrame(current_rows)))
         return out
 
-    def _block_totals(self, df: pd.DataFrame) -> Tuple[float, float, float, float]:
+    def _block_totals(self, df: pd.DataFrame) -> List[float]:
         if df.empty:
-            return 0.0, 0.0, 0.0, 0.0
+            return [0.0] * len(self.money_columns)
         min_lvl = int(df["_lvl"].astype(int).min())
         top_rows = df[df["_lvl"].astype(int) == min_lvl]
-        return (
-            float(top_rows["_budget_total"].sum()) if "_budget_total" in top_rows else 0.0,
-            float(top_rows["_grant"].sum()),
-            float(top_rows["_spent"].sum()),
-            float(top_rows["_balance"].sum()),
-        )
+        return [float(top_rows.get(f"_money_{c}", pd.Series([0.0])).sum()) for c in self.money_columns]
 
     def _append_block_rows(self, parent: QStandardItem, df: pd.DataFrame, identity_to_skip: Optional[str] = None):
         if df.empty:
@@ -326,22 +294,22 @@ class BudgetTreeBuilder:
             text = str(r["_item_text"])
             plain = str(r.get("_plain_text", text)).strip()
 
-            # ✅ 부모 노드(사업명)와 중복되는 계층인지 확인 (최상위 레층 대상)
             if identity_to_skip and lvl == start_level and plain == identity_to_skip:
                 continue
 
-            grant = float(r["_grant"])
-            spent = float(r["_spent"])
-            bal = float(r["_balance"])
-            bgt = float(r.get("_budget_total", 0.0))
             cost = str(r.get("원가통계비목", "") or "").strip()
             if cost.lower() == "nan":
                 cost = ""
 
-            # ✅ 0원 행 숨기기 처리: 집계에는 포함되었으나 화면에만 노출되지 않게 함
-            # 지출액과 잔액이 모두 0원인 경우(실질 동작 없음) 건너뜀
-            if self.hide_zero_rows and spent == 0 and bal == 0:
-                continue
+            # 0원 행 숨기기 처리
+            if self.hide_zero_rows:
+                spent_col = next((c for c in self.money_columns if "지출액" in c), None)
+                bal_col = next((c for c in self.money_columns if "잔액" in c), None)
+                
+                spent = float(r.get(f"_money_{spent_col}", 0.0)) if spent_col else 0.0
+                bal = float(r.get(f"_money_{bal_col}", 0.0)) if bal_col else 0.0
+                if spent == 0 and bal == 0:
+                    continue
 
             label = f"{_pad_for_level(lvl, start_level)}{text}"
             kind = "l3" if lvl == start_level else "leaf"
@@ -349,14 +317,9 @@ class BudgetTreeBuilder:
 
             c0 = QStandardItem(label)
             c1 = QStandardItem(cost)
-            c_bgt = self._money_item(bgt, kind=kind, bg=bg)
-            c2 = self._money_item(grant, kind=kind, bg=bg)
-            c3 = self._money_item(spent, kind=kind, bg=bg)
-            c4 = self._money_item(bal, kind=kind, bg=bg)
-
+            
             self._apply_item(c0, kind=kind, bg=bg, tooltip=text)
             self._apply_item(c1, kind=kind, bg=bg, tooltip=cost)
-            self._apply_item(c_bgt, kind=kind, bg=bg)
 
             if kind == "l3":
                 f = QFont()
@@ -368,13 +331,19 @@ class BudgetTreeBuilder:
                 f.setPointSize(self.base_font_size)
                 c0.setFont(f)
 
+            row_items = [c0, c1]
+            for c in self.money_columns:
+                val = float(r.get(f"_money_{c}", 0.0))
+                row_items.append(self._money_item(val, kind=kind, bg=bg))
+
             while stack and stack[-1][0] >= lvl:
                 stack.pop()
             if stack:
-                stack[-1][1].appendRow([c0, c1, c_bgt, c2, c3, c4])
+                stack[-1][1].appendRow(row_items)
             else:
-                parent.appendRow([c0, c1, c_bgt, c2, c3, c4])
+                parent.appendRow(row_items)
             stack.append((lvl, c0))
+
 
     def _apply_item(
         self,

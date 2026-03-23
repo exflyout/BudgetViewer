@@ -50,7 +50,7 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-APP_VERSION = "1.4"
+APP_VERSION = "1.5"
 APP_TITLE = f"예산현액 뷰어 (v{APP_VERSION}) — 일상경비교부액"
 
 
@@ -891,8 +891,8 @@ class MainWindow(QMainWindow):
         saved_visible = settings.value("visible_columns", None)
         
         if saved_visible is None:
-            # 설정이 없는 최초 실행 시 사용자 요청 초기 노출 열 4개 지정
-            default_visible = ["교부액", "원인행위액", "지출액", "잔액"]
+            # 설정이 없는 최초 실행 시 사용자 요청 초기 노출 열 지정
+            default_visible = ["예산현액", "배부액", "교부액", "원인행위액", "지출액", "잔액"]
         elif isinstance(saved_visible, str): # QSettings.value() can return str for single item
             default_visible = [saved_visible]
         else:

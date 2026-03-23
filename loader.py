@@ -299,7 +299,7 @@ def load_and_parse_excel(path: str) -> ParseResult:
     # 일상경비교부액이라는 상위 헤더가 없거나 텍스트가 깨져 못 찾은 경우 Fallback
     if not money_cols_info:
         for c in columns:
-            if any(k in c for k in ["원인행위액", "지출결의액", "지출결의잔액", "교부액", "지출액", "잔액", "채무확정액"]):
+            if any(k in c for k in ["예산현액", "배부액", "원인행위액", "지출결의액", "지출결의잔액", "교부액", "지출액", "잔액", "채무확정액"]):
                 disp = c.split("_")[-1]
                 disp = re.sub(r'\(.*?\)', '', disp).strip()
                 if disp == "교부잔액": disp = "잔액"

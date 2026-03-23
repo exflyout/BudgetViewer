@@ -1,5 +1,5 @@
 {
-  "version": "1.4",
+  "version": "1.5",
   "url": "https://github.com/exflyout/BudgetViewer/releases/latest",
-  "release_notes": "v1.4 업데이트: 동적 예산 컬럼 로드 및 UI 표시 제어 필터 지원 (원인행위액, 지출결의액 등 P~U열 추가 지원)"
+  "release_notes": "v1.5 업데이트: 예산현액(I열) 추가 지원 및 초기 표시 항목 설정 개선"
 }

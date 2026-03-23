@@ -33,17 +33,15 @@ class GroupBoxDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.Antialiasing, False)
         
         # --- 2. 배경 및 선택/하이라이트 렌더링 ---
-        # Note: 델리게이트가 전체 영역을 그리므로 super()는 텍스트만 그리게 함
         full_rect = option.rect
         painter.fillRect(full_rect, bg)
         
         if is_selected:
             painter.fillRect(full_rect, self.select_overlay)
         elif is_hover:
-            # ✅ 불투명 색상이므로 1px 확장을 통해 컬럼 간 간극을 완전히 메움
-            painter.fillRect(full_rect.adjusted(-1, 0, 1, 0), self.hover_overlay)
+            painter.fillRect(full_rect, self.hover_overlay)
 
-        # --- 3. 구분선 렌더링 (전 컬럼 공유) ---
+        # --- 3. 구분선 렌더링 ---
         if kind == "l1":
             p = QPen(self.line_strong, 1)
             painter.setPen(p)
@@ -70,15 +68,15 @@ class GroupBoxDelegate(QStyledItemDelegate):
 
         # --- 4. 텍스트 렌더링 (super 호출) ---
         opt = QStyleOptionViewItem(option)
-        # 배경을 이미 그렸으므로 super()의 배경 그리기를 방지하기 위해 상태 해제
         opt.state &= ~QStyle.StateFlag.State_Selected
         opt.state &= ~QStyle.StateFlag.State_MouseOver
         
-        # 텍스트에만 패딩 적용
-        if index.column() in (2, 3, 4, 5):
-            pad = 12 if index.column() != 5 else 18
-            opt.rect = opt.rect.adjusted(0, 0, -pad, 0)
+        # 텍스트 패딩 (v1.5 스타일)
+        if index.column() >= 2:
+            # 수치 데이터 우측 패딩
+            opt.rect = opt.rect.adjusted(0, 0, -12, 0)
         elif index.column() == 0:
-            opt.rect = opt.rect.adjusted(4, 4, -4, -4) # 상하 패딩 추가
+            # 항목명 상하좌우 패딩
+            opt.rect = opt.rect.adjusted(6, 4, -4, -4)
 
         super().paint(painter, opt, index)

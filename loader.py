@@ -30,6 +30,8 @@ class ParseResult:
     l2_items: List[Tuple[str, str]]  # legacy: 3세부 기준 기본 목록
     budget_codes: List[Tuple[str, str]]
     totals: Dict[str, float]
+    l1_group_totals: Dict[str, Dict[str, float]]
+    l2_group_totals: Dict[str, Dict[str, float]]
     analysis_summary: Dict[str, int]
     money_columns: List[str] = None
 
@@ -158,7 +160,15 @@ def _parse_level(text: str) -> ParsedLevel:
         plain = m6.group(2).strip()
         return ParsedLevel(6, f"({m6.group(1)}) {plain}", plain)
 
-    return ParsedLevel(9, t, t)
+    # 💡 [Note] 예산코드([210]) 패턴은 레벨 10으로 취급
+    m_code = _RE_CODE_ROW.match(t)
+    if m_code:
+        plain = m_code.group(2).strip()
+        display = f"[{m_code.group(1)}] {plain}"
+        return ParsedLevel(10, display, plain)
+
+    # 💡 소계/합계 등이 포함된 행도 10으로 취급
+    return ParsedLevel(10, t, t)
 
 
 def _appearance_order(values: List[str]) -> List[str]:
@@ -250,6 +260,10 @@ def _build_business_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, i
     return out, {"auto_3": auto_3, "auto_4": auto_4}
 
 
+def _is_hierarchical(lvl: int) -> bool:
+    return 1 <= lvl <= 6
+
+
 def load_and_parse_excel(path: str) -> ParseResult:
     xlsx = Path(path)
     if not xlsx.exists():
@@ -287,35 +301,52 @@ def load_and_parse_excel(path: str) -> ParseResult:
     cost_col = _find_col_loose(columns, ["원가통계비목"]) or _find_col_loose(columns, ["원가", "비목"])
 
     # --- 일상경비교부액 기준 동적 컬럼 식별 ---
+    # 유저 요청: D(예산현액), I(배부액), J(교부액), K(원인행위액), L(지출액), R(배부잔액), M(교부잔액)
+    # 💡 괄호 안의 알파벳을 파싱하여 우선순위 부여
+    target_map = {
+        "D": "예산현액",
+        "I": "배부액",
+        "J": "교부액",
+        "K": "원인행위액",
+        "L": "지출액",
+        "R": "배부잔액",
+        "M": "교부잔액"
+    }
+    
     money_cols_info = []
+    found_letters = {}
+    
     for c in columns:
-        if "일상경비교부액" in c:
-            disp = c.split("_")[-1]
-            disp = re.sub(r'\(.*?\)', '', disp).strip() # 괄호가 포함된 부가 설명 삭제 (예: 배부잔액(M=J-K) -> 배부잔액)
-            if disp == "교부잔액": 
-                disp = "잔액"
-            money_cols_info.append((c, disp))
-            
-    # 일상경비교부액이라는 상위 헤더가 없거나 텍스트가 깨져 못 찾은 경우 Fallback
-    if not money_cols_info:
-        for c in columns:
-            if any(k in c for k in ["예산현액", "배부액", "원인행위액", "지출결의액", "지출결의잔액", "교부액", "지출액", "잔액", "채무확정액"]):
-                disp = c.split("_")[-1]
-                disp = re.sub(r'\(.*?\)', '', disp).strip()
-                if disp == "교부잔액": disp = "잔액"
+        cc = str(c)
+        # "일상경비교부액_예산현액(D)" 와 같은 형태에서 (D) 추출
+        m = re.search(r"\(([A-Z])\)", cc)
+        if m:
+            letter = m.group(1)
+            if letter in target_map:
+                disp = target_map[letter]
                 money_cols_info.append((c, disp))
+                found_letters[letter] = True
 
-    # 순서 유지하며 중복 제거
-    seen_disp = set()
-    final_money_cols = []
-    for orig_c, disp in money_cols_info:
-        if disp not in seen_disp:
-            seen_disp.add(disp)
-            final_money_cols.append((orig_c, disp))
-            
-    money_columns = [disp for _, disp in final_money_cols]
-    if not money_columns:
-        raise ValueError("일상경비교부액 관련 예상 열(원인행위액, 교부액, 지출액, 잔액 등)을 찾을 수 없습니다. 엑셀 형식을 확인해주세요.")
+    # 알파벳으로 못 찾은 경우 키워드 매칭 (Fallback)
+    if len(money_cols_info) < len(target_map):
+        keywords = ["예산현액", "배부액", "교부액", "원인행위액", "지출액", "배부잔액", "교부잔액"]
+        for c in columns:
+            cc = str(c)
+            # 이미 찾은 알파벳은 제외
+            m = re.search(r"\(([A-Z])\)", cc)
+            if m and m.group(1) in found_letters:
+                continue
+                
+            for k in keywords:
+                if k in cc:
+                    # 중복 방지
+                    if not any(info[1] == k for info in money_cols_info):
+                        money_cols_info.append((c, k))
+                    break
+
+    # 순서 유지하며 "잔액" 추가 (유저 요청: J - L)
+    money_columns = [info[1] for info in money_cols_info]
+    money_columns.append("잔액")
 
     out = data.copy()
     out["_raw_item"] = out[item_col].fillna("").astype(str).str.strip()
@@ -326,24 +357,67 @@ def load_and_parse_excel(path: str) -> ParseResult:
         out["원가통계비목"] = ""
 
     # 식별된 동적 금액 컬럼들을 _money_ 접두사를 붙여 저장
-    for orig_c, disp in final_money_cols:
+    for orig_c, disp in money_cols_info:
         out[f"_money_{disp}"] = _to_money(out[orig_c])
 
-    # 0원 행 숨김 등의 처리를 위해 임시로 기존 로직과 호환성 유지용 변수 배정
-    grant_disp = next((d for d in money_columns if "교부액" in d), None)
-    spent_disp = next((d for d in money_columns if "지출액" in d), None)
-    bal_disp = next((d for d in money_columns if "잔액" in d), None)
+    # 💡 [유저 요청] 잔액 재계산: 잔액 = 교부액 - 지출액
+    grant_key = next((disp for _, disp in money_cols_info if "교부액" in disp), None)
+    spent_key = next((disp for _, disp in money_cols_info if "지출액" in disp), None)
     
-    out["_grant"] = out[f"_money_{grant_disp}"] if grant_disp else 0.0
-    out["_spent"] = out[f"_money_{spent_disp}"] if spent_disp else 0.0
-    out["_balance"] = out[f"_money_{bal_disp}"] if bal_disp else 0.0
+    if grant_key and spent_key:
+        out["_money_잔액"] = out[f"_money_{grant_key}"] - out[f"_money_{spent_key}"]
+    else:
+        out["_money_잔액"] = 0.0
 
+    # --- 💡 계층별 절대 합계(Grand Totals) 사전 계산 ---
+    # 필터링과 무관하게 원본 데이터 기준의 합계를 미리 구함
+    
+    # 💡 [중요] 중복 계산 방지를 위해 실제 데이터 행(Leaf) 식별 플래그 생성
+    # 소계/합계 행 및 예산코드 행은 계산에서 제외
+    raw_items = out["_raw_item"].tolist()
+    lvls = [_parse_level(t).lvl for t in raw_items]
+    is_leaf_mask = []
+    for i in range(len(lvls)):
+        lvl = lvls[i]
+        item = str(raw_items[i])
+        
+        # 1. 명시적 제외 (소계, 합계, 총계 등)
+        if any(k in item for k in ["소계", "합계", "총계"]):
+            is_leaf_mask.append(False)
+            continue
+            
+        # 2. 비계층 행 제외 (예산코드 등)
+        if not _is_hierarchical(lvl):
+            is_leaf_mask.append(False)
+            continue
+            
+        # 3. 자식 여부 판단 (다음 계층 행의 레벨이 더 깊으면 부모임)
+        if i + 1 < len(lvls):
+            next_h_lvl = None
+            for j in range(i + 1, len(lvls)):
+                if _is_hierarchical(lvls[j]):
+                    next_h_lvl = lvls[j]
+                    break
+            
+            if next_h_lvl is not None and next_h_lvl > lvl:
+                is_leaf_mask.append(False)
+            else:
+                is_leaf_mask.append(True)
+        else:
+            is_leaf_mask.append(True)
+    
+    out["_is_agg_leaf"] = is_leaf_mask
+    leaf_only_df = out[out["_is_agg_leaf"]].copy()
+
+    # 1. 전체 합계 (Totals)
     is_total = out["_raw_item"].astype(str).str.strip().eq("소계")
     if is_total.any():
         tot_row = out.loc[is_total].iloc[-1]
-        totals = {disp: float(tot_row[f"_money_{disp}"]) for disp in money_columns}
+        totals = {disp: float(tot_row.get(f"_money_{disp}", 0.0)) for disp in money_columns}
     else:
-        totals = {disp: float(out[f"_money_{disp}"].sum()) for disp in money_columns}
+        # 요약 행을 제외한 말단 데이터만 합산
+        totals = {disp: float(leaf_only_df[f"_money_{disp}"].sum()) for disp in money_columns}
+
 
 
     code_col = _find_col_loose(columns, ["예산코드"])
@@ -432,12 +506,37 @@ def load_and_parse_excel(path: str) -> ParseResult:
     out["_L3_display"] = l3_display_list
     out["_L3_name"] = l3_plain_list
     out["_L3_key"] = l3_key_list
+
+    # --- 💡 계층별 절대 합계(Grand Totals) 사전 계산 (계층 컬럼 생성 후 수행) ---
+    l1_group_totals = {}
+    l2_group_totals = {}
+    
+    # 중복 합산 방지를 위해 말단 데이터만 사용하여 그룹 합계 계산
+    leaf_only_final = out[out["_is_agg_leaf"]].copy()
+
+    for l1_key in _appearance_order(out["_L1_key"].astype(str).tolist()):
+        l1_df = leaf_only_final[leaf_only_final["_L1_key"] == l1_key]
+        l1_group_totals[l1_key] = {col: float(l1_df[f"_money_{col}"].sum()) for col in money_columns}
+        
+    # 💡 [중요] L2와 L3 합계를 통합하여 모든 분석 모드(3세부/4세부)에서 합계가 보이도록 함
+    for l2_key in _appearance_order(out["_L2_key"].astype(str).tolist()):
+        l2_df = leaf_only_final[leaf_only_final["_L2_key"] == l2_key]
+        l2_group_totals[l2_key] = {col: float(l2_df[f"_money_{col}"].sum()) for col in money_columns}
+
+    for l3_key in _appearance_order(out["_L3_key"].astype(str).tolist()):
+        if not l3_key: continue
+        l3_df = leaf_only_final[leaf_only_final["_L3_key"] == l3_key]
+        l2_group_totals[l3_key] = {col: float(l3_df[f"_money_{col}"].sum()) for col in money_columns}
     out["_row_order"] = list(range(len(out)))
 
     mask_code_row = out["_raw_item"].astype(str).str.match(_RE_CODE_ROW)
     out = out[~is_total & ~mask_code_row].copy()
     out = out[~out["_lvl"].isin([1, 2])].copy()
     out = out[out["_item_text"].astype(str).str.strip().ne("")].copy()
+    
+    # 💡 [중요] 기존 분류 데이터(외국인평화캠프 등) 보존을 위해 행을 삭제하지 않음
+    # 대신 _is_agg_leaf 플래그를 통해 합계 로직에서만 선별적으로 사용
+    
     out = out.reset_index(drop=True)
 
     out, analysis_summary = _build_business_columns(out)
@@ -472,6 +571,8 @@ def load_and_parse_excel(path: str) -> ParseResult:
         l2_items=l2_items,
         budget_codes=budget_codes,
         totals=totals,
+        l1_group_totals=l1_group_totals,
+        l2_group_totals=l2_group_totals,
         analysis_summary=analysis_summary,
         money_columns=money_columns,
     )

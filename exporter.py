@@ -24,7 +24,8 @@ def _collect_rows_with_depth(view: QTreeView) -> List[Tuple[List[Any], int]]:
             idx0 = model.index(r, 0, parent)
             row_vals = []
             for c in range(model.columnCount(parent)):
-                if not view.isColumnHidden(c):
+                # 💡 항목(Col 0)은 고정 트리용으로 숨겨져 있더라도 무조건 내보내기에 포함
+                if c == 0 or not view.isColumnHidden(c):
                     idx = model.index(r, c, parent)
                     row_vals.append(model.data(idx))
             rows.append((row_vals, depth))
@@ -44,7 +45,7 @@ def export_current_view_to_excel(view: QTreeView, path: str) -> None:
     headers = [
         model.headerData(i, view.header().orientation(), role=0)
         for i in range(model.columnCount())
-        if not view.isColumnHidden(i)
+        if i == 0 or not view.isColumnHidden(i)
     ]
 
     wb = Workbook()

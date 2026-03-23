@@ -1,5 +1,5 @@
 {
-  "version": "1.5",
+  "version": "1.6.0",
   "url": "https://github.com/exflyout/BudgetViewer/releases/latest",
-  "release_notes": "v1.5 업데이트: 예산현액(I열) 추가 지원 및 초기 표시 항목 설정 개선"
+  "release_notes": "v1.5.2 업데이트: 분류 체계 복구 및 합계 중복 오류 수정"
 }

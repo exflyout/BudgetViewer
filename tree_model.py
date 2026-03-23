@@ -86,15 +86,18 @@ class BuildOptions:
 
 
 class BudgetTreeBuilder:
-    def __init__(self, df: pd.DataFrame, money_columns: List[str]):
+    def __init__(self, df: pd.DataFrame, money_columns: List[str], l1_totals=None, l2_totals=None):
         self.df = df.copy()
         self.money_columns = money_columns
+        self.l1_group_totals = l1_group_totals if l1_totals is None else l1_totals # 호환성 유지
+        self.l1_totals = l1_totals or {}
+        self.l2_totals = l2_totals or {}
         self.HEADERS = ["항목", "원가통계비목"] + self.money_columns
         self.business_key_col = "_biz_key_auto"
         self.business_display_col = "_biz_display_auto"
         self.business_level_col = "_biz_level_auto"
         self.base_font_size = 10
-        self.hide_zero_rows = False # 상태 정보 보관
+        self.hide_zero_rows = False 
 
 
     def build_model(self, opt: BuildOptions) -> QStandardItemModel:
@@ -115,6 +118,11 @@ class BudgetTreeBuilder:
         else:
             self._build_business_first(model, data)
 
+        # 💡 [유저 요청] 필터링 시 하단에 '소계(현재 화면)' 행 추가
+        # 데이터가 필터링된 상태인 경우(전체 row 수와 다를 때) 혹은 항상 표시
+        if not data.empty:
+            self._append_subtotal_row(model, data)
+
         return model
 
     def _apply_filters(self, df: pd.DataFrame, opt: BuildOptions) -> pd.DataFrame:
@@ -125,10 +133,10 @@ class BudgetTreeBuilder:
             out = out[out[self.business_key_col].astype(str).isin(opt.selected_businesses)]
         if opt.selected_codes is not None:
             out = out[out["_code"].astype(str).isin(opt.selected_codes)]
-        
+
         # 💡 [중요] 0원 행 숨기기는 집계에 영향을 주지 않기 위해 여기서 제거하지 않고,
         # 나중에 트리를 그릴 때(_append_block_rows) 노출만 제어합니다.
-        
+
         return out.sort_values("_row_order").copy()
 
     def _build_business_first(self, model: QStandardItemModel, df: pd.DataFrame):
@@ -141,9 +149,12 @@ class BudgetTreeBuilder:
                 continue
 
             l1_display = str(l1_df["_L1_display"].iloc[0])
-            l1_totals = self._block_totals(l1_df)
-            l1_item = self._section_item(l1_display, i)
+            # 💡 [유저 요청] 필터링 무관 절대 총액 사용
+            l1_totals_dict = self.l1_totals.get(l1_key, {})
+            l1_totals = [l1_totals_dict.get(c, 0.0) for c in self.money_columns]
             
+            l1_item = self._section_item(l1_display, i)
+
             row_items = [l1_item, self._blank("l1", _l1_bg(i))]
             for val in l1_totals:
                 row_items.append(self._money_item(val, kind="l1", bg=_l1_bg(i)))
@@ -157,7 +168,10 @@ class BudgetTreeBuilder:
 
                 biz_display = str(biz_df[self.business_display_col].iloc[0])
                 biz_kind = self._business_kind(int(biz_df[self.business_level_col].iloc[0]))
-                biz_totals = self._block_totals(biz_df)
+                # 💡 [유저 요청] 필터링 무관 절대 총액 사용
+                biz_totals_dict = self.l2_totals.get(business_key, {})
+                biz_totals = [biz_totals_dict.get(c, 0.0) for c in self.money_columns]
+                
                 biz_item = self._mid_item(f"○ {biz_display}", kind=biz_kind)
 
                 identity_to_skip = biz_display.split(" / ")[-1].strip() if " / " in biz_display else biz_display.strip()
@@ -170,12 +184,12 @@ class BudgetTreeBuilder:
                 for code, code_name, block_df in self._split_code_blocks(biz_df):
                     code_totals = self._block_totals(block_df)
                     code_item = self._code_item(code, code_name)
-                    
+
                     row_items = [code_item, self._blank("code", _code_bg())]
                     for val in code_totals:
                         row_items.append(self._money_item(val, kind="code", bg=_code_bg()))
                     biz_item.appendRow(row_items)
-                    
+
                     self._append_block_rows(code_item, block_df, identity_to_skip=identity_to_skip)
 
     def _build_code_first(self, model: QStandardItemModel, df: pd.DataFrame):
@@ -189,7 +203,7 @@ class BudgetTreeBuilder:
 
             code_totals = self._grouped_totals(code_df, self.business_key_col)
             code_item = self._section_item(f"[{code}] {code_name}".strip(), i)
-            
+
             row_items = [code_item, self._blank("l1", _l1_bg(i))]
             for val in code_totals:
                 row_items.append(self._money_item(val, kind="l1", bg=_l1_bg(i)))
@@ -203,7 +217,7 @@ class BudgetTreeBuilder:
 
                 l1_display = str(l1_df["_L1_display"].iloc[0])
                 l1_item = self._mid_item(l1_display, kind="l2")
-                
+
                 row_items = [l1_item, self._blank("l2")] + [self._blank("l2") for _ in self.money_columns]
                 code_item.appendRow(row_items)
 
@@ -222,7 +236,7 @@ class BudgetTreeBuilder:
 
                     row_items = [biz_item, self._blank(child_kind)] + [self._blank(child_kind) for _ in self.money_columns]
                     l1_item.appendRow(row_items)
-                    
+
                     self._append_block_rows(biz_item, biz_df, identity_to_skip=identity_to_skip)
 
     def _business_kind(self, business_level: int) -> str:
@@ -278,9 +292,9 @@ class BudgetTreeBuilder:
     def _block_totals(self, df: pd.DataFrame) -> List[float]:
         if df.empty:
             return [0.0] * len(self.money_columns)
-        min_lvl = int(df["_lvl"].astype(int).min())
-        top_rows = df[df["_lvl"].astype(int) == min_lvl]
-        return [float(top_rows.get(f"_money_{c}", pd.Series([0.0])).sum()) for c in self.money_columns]
+        # 💡 중복 합산 방지를 위해 해당 블록 내의 말단(Leaf) 데이터만 합산
+        leaf_df = df[df.get("_is_agg_leaf", True)].copy()
+        return [float(leaf_df.get(f"_money_{c}", pd.Series([0.0])).sum()) for c in self.money_columns]
 
     def _append_block_rows(self, parent: QStandardItem, df: pd.DataFrame, identity_to_skip: Optional[str] = None):
         if df.empty:
@@ -304,8 +318,8 @@ class BudgetTreeBuilder:
             # 0원 행 숨기기 처리
             if self.hide_zero_rows:
                 spent_col = next((c for c in self.money_columns if "지출액" in c), None)
-                bal_col = next((c for c in self.money_columns if "잔액" in c), None)
-                
+                bal_col = next((c for c in self.money_columns if "잔액" in d), None)
+
                 spent = float(r.get(f"_money_{spent_col}", 0.0)) if spent_col else 0.0
                 bal = float(r.get(f"_money_{bal_col}", 0.0)) if bal_col else 0.0
                 if spent == 0 and bal == 0:
@@ -317,7 +331,7 @@ class BudgetTreeBuilder:
 
             c0 = QStandardItem(label)
             c1 = QStandardItem(cost)
-            
+
             self._apply_item(c0, kind=kind, bg=bg, tooltip=text)
             self._apply_item(c1, kind=kind, bg=bg, tooltip=cost)
 
@@ -423,3 +437,32 @@ class BudgetTreeBuilder:
         default_bg = _l2_bg() if kind == "l2" else _leaf_bg()
         self._apply_item(it, kind=kind, bg=bg or default_bg)
         return it
+
+    def _append_subtotal_row(self, model: QStandardItemModel, df: pd.DataFrame):
+        """ 하단에 현재 화면(필터링 결과)의 합계를 표시하는 특별 행 추가 """
+        root = model.invisibleRootItem()
+        
+        # 빈 줄 하나 삽입
+        root.appendRow([self._blank("leaf") for _ in range(model.columnCount())])
+        
+        subtotal_item = QStandardItem("∑ 소계 (현재 필터 결과)")
+        f = QFont()
+        f.setBold(True)
+        f.setPointSize(self.base_font_size + 1)
+        subtotal_item.setFont(f)
+        subtotal_item.setForeground(QColor(37, 99, 235)) # 파란색 강조
+        
+        bg = QColor(241, 245, 249) # 연한 회색 배경
+        self._apply_item(subtotal_item, kind="l1", bg=bg)
+        
+        row_items = [subtotal_item, self._blank("l1", bg)]
+        
+        # 현재 화면에 보이는 데이터들의 합계 계산
+        # 💡 중복 합산 방지를 위해 _is_agg_leaf 플래그가 True인 말단 데이터만 합산
+        leaf_df = df[df.get("_is_agg_leaf", True)].copy()
+        
+        for col in self.money_columns:
+            val = float(leaf_df[f"_money_{col}"].sum())
+            row_items.append(self._money_item(val, kind="l1", bg=bg))
+            
+        root.appendRow(row_items)

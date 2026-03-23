@@ -5,7 +5,7 @@ import warnings
 from pathlib import Path
 from typing import Callable, List, Optional, Set, Tuple
 
-from PySide6.QtCore import Qt, QTimer, QSettings
+from PySide6.QtCore import Qt, QTimer, QSettings, QItemSelectionModel
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -50,7 +50,7 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-APP_VERSION = "1.5"
+APP_VERSION = "1.6.0"
 APP_TITLE = f"예산현액 뷰어 (v{APP_VERSION}) — 일상경비교부액"
 
 
@@ -79,19 +79,20 @@ def check_for_updates(current_version: str, parent=None):
     """
     import urllib.request
     import json
-    
+
     # 💡 실제 사용자의 GitHub 저장소 내 version.json 주소로 변경
     UPDATE_URL = "https://raw.githubusercontent.com/exflyout/BudgetViewer/main/version.json"
-    
+
     try:
-        # 💡 실제 네트워크 연결 시 타임아웃을 짧게 설정하여 사용자 대기 최소화
-        with urllib.request.urlopen(UPDATE_URL, timeout=2) as response:
+        req = urllib.request.Request(UPDATE_URL, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=2) as response:
             data = json.loads(response.read().decode())
             latest_version = data.get("version", current_version)
-            download_url = data.get("url", "")
-            
+            # 💡 기존 오류 페이지 대신 실제 배포(Releases) 페이지나 유저 지정 URL 사용
+            download_url = data.get("url", "https://github.com/exflyout/BudgetViewer/releases")
+
             if latest_version > current_version:
-                msg = f"새로운 버전({latest_version})이 출시되었습니다.\n\n업데이트 하시겠습니까?"
+                msg = f"새로운 버전({latest_version})이 출시되었습니다.\n\n업데이트 페이지로 이동하시겠습니까?"
                 if QMessageBox.question(parent, "업데이트 알림", msg) == QMessageBox.Yes:
                     import webbrowser
                     webbrowser.open(download_url)
@@ -143,12 +144,12 @@ class FilterList(QFrame):
         self.btn_all = QPushButton("전체 선택")
         self.btn_none = QPushButton("전체 해제")
         self.btn_search_only = QPushButton("검색결과만")
-        
+
         for btn in (self.btn_all, self.btn_none, self.btn_search_only):
             # 글자 크기를 약간 줄여서 3개가 잘 보이게 함
             btn.setStyleSheet("font-size: 11px; padding: 4px;")
             btn_layout.addWidget(btn)
-            
+
         root.addLayout(btn_layout)
 
         self.scroll = QScrollArea(self)
@@ -169,6 +170,7 @@ class FilterList(QFrame):
         root.addWidget(self.scroll, 1)
 
         self.search.textChanged.connect(self._apply_search)
+        self.search.returnPressed.connect(self._on_search_only_clicked) # 💡 엔터키 지원
         self.btn_all.clicked.connect(self._on_all_clicked)
         self.btn_none.clicked.connect(self._on_none_clicked)
         self.btn_search_only.clicked.connect(self._on_search_only_clicked)
@@ -323,7 +325,6 @@ class FilterList(QFrame):
         if self._changed_cb:
             self._changed_cb()
 
-
 class ManualDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -337,7 +338,7 @@ class ManualDialog(QDialog):
         header_layout = QVBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(4) # 제목과 소개글 사이 간격을 최소화 (8 -> 4)
-        
+
         title = QLabel("예산현액 파일 다운로드 및 불러오기 안내")
         f = QFont()
         f.setPointSize(17)
@@ -381,7 +382,7 @@ class ManualDialog(QDialog):
         ]
         sf = QFont()
         sf.setPointSize(13) # 12 -> 13
-        
+
         for step in steps:
             lb = QLabel(step)
             lb.setFont(sf)
@@ -412,10 +413,10 @@ class ManualDialog(QDialog):
         image_label = QLabel()
         image_label.setAlignment(Qt.AlignCenter)
         image_label.setStyleSheet("border:none; background:#ffffff;")
-        
+
         # 💡 PyInstaller 리소스 경로 대응
         actual_img_path = resource_path("kedu_manual.png")
-        
+
         if Path(actual_img_path).exists():
             pix = QPixmap(str(actual_img_path))
             if not pix.isNull():
@@ -431,20 +432,20 @@ class ManualDialog(QDialog):
         image_layout.addWidget(image_label)
         # 카드 내부는 촘큼하게 (addStretch 제거)
         root.addWidget(image_card)
-        
+
         # 💡 [핵심] 하단에 Stretch를 추가하여 위의 모든 요소가 위로 밀집되게 함
         root.addStretch(1)
 
         # 💡 버전 및 문의 정보 표시
         contact_layout = QVBoxLayout()
         contact_layout.setSpacing(2)
-        
+
         version_label = QLabel(f"Version {APP_VERSION}")
         version_label.setStyleSheet("color: #94a3b8; font-size: 11px;")
-        
+
         contact_label = QLabel("이용문의: 고종훈 (exflyout@ice.go.kr)")
         contact_label.setStyleSheet("color: #64748b; font-size: 11px; font-weight: bold;")
-        
+
         contact_layout.addWidget(version_label)
         contact_layout.addWidget(contact_label)
         root.addLayout(contact_layout)
@@ -467,27 +468,26 @@ class ColumnFilterPopup(QWidget):
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(12, 12, 12, 12)
         self.layout.setSpacing(6)
-        
+
         lbl = QLabel("표시할 열 선택")
         self.layout.addWidget(lbl)
-        
+
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
         self.scroll.setStyleSheet("border: none;")
-        
+
         self.inner = QWidget()
         self.inner_layout = QVBoxLayout(self.inner)
         self.inner_layout.setContentsMargins(0, 0, 0, 0)
         self.inner_layout.setSpacing(2)
         self.scroll.setWidget(self.inner)
-        
+
         self.layout.addWidget(self.scroll, 1)
 
     def adjust_height(self, count: int):
         h = min(count * 28 + 60, 420)
         self.resize(220, h)
-
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -536,7 +536,7 @@ class MainWindow(QMainWindow):
         self.kpi_row = QHBoxLayout()
         self.kpi_cards = {}
         outer.addLayout(self.kpi_row)
-        
+
         self.kpi_basis = QLabel("기준: -")
         self.kpi_basis.setStyleSheet("color:#64748b;")
         self.kpi_row.addWidget(self.kpi_basis)
@@ -640,7 +640,7 @@ class MainWindow(QMainWindow):
         self.btn_font_default.setFixedWidth(74)
         ctrl_row.addWidget(self.spin_font)
         ctrl_row.addWidget(self.btn_font_default)
-        
+
         # 동적 열 표시 UI 버튼 (팝업 메뉴 트리거)
         self.btn_col_filter = QPushButton("표시 항목 ▼")
         self.btn_col_filter.setStyleSheet("font-weight: bold;")
@@ -649,34 +649,35 @@ class MainWindow(QMainWindow):
         self.col_popup = ColumnFilterPopup(self)
         self.btn_col_filter.clicked.connect(self._show_col_popup)
         ctrl_row.addWidget(self.btn_col_filter)
-        
+
         ctrl_row.addStretch(1)
-        
+
         self.chk_hide_zero = QCheckBox("0원 행 숨기기")
         self.chk_hide_zero.setToolTip("지출액과 잔액이 모두 0원인 항목을 숨깁니다.")
         self.chk_hide_zero.stateChanged.connect(self._schedule_refresh)
         ctrl_row.addWidget(self.chk_hide_zero)
-        
+
         right_layout.addLayout(ctrl_row)
 
+        # --- 💡 Reverted to Stable Single Tree View (v1.5 style) ---
         self.tree = QTreeView()
         self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.tree.setAlternatingRowColors(False)
         self.tree.setUniformRowHeights(True)
+        self.tree.setIndentation(20)
         self.tree.setAnimated(False)
-        self.tree.setExpandsOnDoubleClick(True)
         self.tree.setAllColumnsShowFocus(True)
         self.tree.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self.tree.setItemDelegate(GroupBoxDelegate(self.tree))
-
+        
         header = self.tree.header()
         header.setSectionResizeMode(QHeaderView.Interactive)
         header.setDefaultAlignment(Qt.AlignCenter)
         header.setStretchLastSection(False)
-        # 폰트 변경 대응
 
         right_layout.addWidget(self.tree, 1)
+        
         splitter.addWidget(right)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([450, 1250])
@@ -745,7 +746,6 @@ class MainWindow(QMainWindow):
                 background: #ffffff;
                 min-width: 64px;
             }
-
             QLineEdit {
                 border: 1px solid #cbd5e1;
                 border-radius: 10px;
@@ -782,10 +782,10 @@ class MainWindow(QMainWindow):
             }
             QLabel#kpiValue { font-size: 14pt; font-weight: 700; color:#0f172a; }
 
+            /* 💡 Stable Single Tree Styling (v1.5) */
             QTreeView {
                 border: 1px solid #d7dee8;
                 border-radius: 12px;
-                padding: 6px;
                 background: #ffffff;
                 gridline-color: #dce4ee;
             }
@@ -793,17 +793,14 @@ class MainWindow(QMainWindow):
                 background: transparent;
                 outline: 0;
             }
-            QTreeView::item:hover { background: transparent; }
-            QTreeView::item:selected { background: transparent; color:#0f172a; }
-
-            /* 트리 왼쪽 '들여쓰기/가지' 영역 하이라이트 동기화 */
-            QTreeView::branch:hover { background: #fff7c2; }
-            QTreeView::branch:selected { background: #dbeafe; }
+            QTreeView::item:hover { background: #fff7c2; }
+            QTreeView::item:selected { background: #dbeafe; color:#0f172a; }
 
             QHeaderView::section {
                 background: #f8fafc;
                 border: none;
                 border-bottom: 1px solid #d7dee8;
+                border-right: 1px solid #dce4ee;
                 padding: 8px 10px;
                 font-weight: 700;
                 color: #334155;
@@ -843,7 +840,7 @@ class MainWindow(QMainWindow):
 
         if not self.parsed:
             if self._current_analysis_mode() == ANALYSIS_MODE_AUTO:
-                self.mode_hint.setText("자동 구조 분석으로 3세부/4세부를 추천합니다.")
+                self.mode_hint.setText("자동 구조 분석으로 3세부/4세분을 추천합니다.")
             elif self._current_analysis_mode() == ANALYSIS_MODE_3:
                 self.mode_hint.setText("세세세부(3세부) 단위로 사업을 묶어 예산코드별로 비교합니다.")
             else:
@@ -883,13 +880,13 @@ class MainWindow(QMainWindow):
             item = self.col_popup.inner_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-                
+
         self.chk_cols.clear()
-        
+
         # 설정(QSettings)에서 이전 선택 상태 불러오기
         settings = QSettings("EXFlyout", "BudgetViewer")
         saved_visible = settings.value("visible_columns", None)
-        
+
         if saved_visible is None:
             # 설정이 없는 최초 실행 시 사용자 요청 초기 노출 열 지정
             default_visible = ["예산현액", "배부액", "교부액", "원인행위액", "지출액", "잔액"]
@@ -897,14 +894,14 @@ class MainWindow(QMainWindow):
             default_visible = [saved_visible]
         else:
             default_visible = list(saved_visible)
-        
+
         for i, col in enumerate(parsed.money_columns):
             cb = QCheckBox(col)
             cb.setChecked(col in default_visible)
             cb.stateChanged.connect(self._on_col_visibility_changed)
             self.col_popup.inner_layout.addWidget(cb)
             self.chk_cols[i + 2] = cb
-            
+
         self.col_popup.inner_layout.addStretch(1)
         self.col_popup.adjust_height(len(parsed.money_columns))
 
@@ -925,7 +922,7 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def export_current(self):
-        if self.tree.model() is None:
+        if not self.tree.model():
             return
         path, _ = QFileDialog.getSaveFileName(
             self,
@@ -936,6 +933,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
+            from exporter import export_current_view_to_excel
             export_current_view_to_excel(self.tree, path)
             QMessageBox.information(self, "저장 완료", f"저장했습니다:\n{path}")
         except Exception as e:
@@ -946,13 +944,13 @@ class MainWindow(QMainWindow):
             item = self.kpi_row.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-                
+
         self.kpi_cards.clear()
         for col in money_columns:
             card = self._kpi_card(col, _fmt_money(totals.get(col, 0.0)))
             self.kpi_row.addWidget(card)
             self.kpi_cards[col] = card
-            
+
         self.kpi_row.addStretch(1)
         self.kpi_basis = QLabel("기준: 소계(전체)")
         self.kpi_basis.setStyleSheet("color:#64748b;")
@@ -962,11 +960,11 @@ class MainWindow(QMainWindow):
         visible_cols = []
         for col_idx, cb in self.chk_cols.items():
             is_checked = cb.isChecked()
-            if self.parsed and self.tree.model(): # Ensure parsed data and model exist before hiding columns
+            if self.parsed and self.tree.model(): 
                 self.tree.setColumnHidden(col_idx, not is_checked)
             if is_checked:
                 visible_cols.append(cb.text())
-                
+
         # 표시항목 사용자 설정 저장
         settings = QSettings("EXFlyout", "BudgetViewer")
         settings.setValue("visible_columns", visible_cols)
@@ -1076,30 +1074,27 @@ class MainWindow(QMainWindow):
             base_font_size=self.spin_font.value(),
         )
 
-        builder = BudgetTreeBuilder(self.parsed.df, self.parsed.money_columns)
+        builder = BudgetTreeBuilder(
+            self.parsed.df, 
+            self.parsed.money_columns,
+            l1_totals=self.parsed.l1_group_totals,
+            l2_totals=self.parsed.l2_group_totals
+        )
         model = builder.build_model(opt)
+        
         self.tree.setModel(model)
         
-        # 트리 렌더링 후 체크되어 있지 않은 열은 숨김
+        # 전체 열 일단 보이기 (그 후 필터 적용)
+        for i in range(model.columnCount()):
+            self.tree.setColumnHidden(i, False)
+
         self._on_col_visibility_changed()
 
         base = self.spin_font.value()
-        # 안전 반경 확보 (Interactive)
         self.tree.setColumnWidth(0, 480 if base <= 10 else 530)
-        self.tree.setColumnWidth(1, 240 if base <= 10 else 260)
+        self.tree.setColumnWidth(1, 160 if base <= 10 else 180) # 원가비목
         
-        # ✅ 수치 데이터 컬럼들을 고정 폭 부여 후 늘이기 제한(스크롤바 유도)
-        header = self.tree.header()
-        header.setSectionResizeMode(0, QHeaderView.Interactive)
-        header.setSectionResizeMode(1, QHeaderView.Interactive)
-        for i in range(2, 2 + len(self.parsed.money_columns)):
-            header.setSectionResizeMode(i, QHeaderView.Interactive)
-            self.tree.setColumnWidth(i, 110 if base <= 10 else 125)
-        
-        self.tree.expandToDepth(2)
-        # ✅ 시각적 깔끔함을 위해 그리드 비활성화 (델리게이트에서 직접 처리)
-        self.tree.setIndentation(20)
-        # 윈도우 크기에 맞게 헤더 레이아웃 트리거
+        self.tree.expandToDepth(1)
         self.tree.header().update()
 
 

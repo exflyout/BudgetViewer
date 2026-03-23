@@ -92,7 +92,8 @@ class BudgetTreeBuilder:
         self.l1_group_totals = l1_group_totals if l1_totals is None else l1_totals # 호환성 유지
         self.l1_totals = l1_totals or {}
         self.l2_totals = l2_totals or {}
-        self.HEADERS = ["항목", "원가통계비목"] + self.money_columns
+        # 💡 [유저 요청] '잔액' 헤더에 수식 정보 추가 (\n으로 줄바꿈)
+        self.HEADERS = ["항목", "원가통계비목"] + [c if c != "잔액" else "잔액\n(교부액-지출액)" for c in self.money_columns]
         self.business_key_col = "_biz_key_auto"
         self.business_display_col = "_biz_display_auto"
         self.business_level_col = "_biz_level_auto"

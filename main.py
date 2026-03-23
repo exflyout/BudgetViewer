@@ -50,7 +50,7 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.7.0"
 APP_TITLE = f"예산현액 뷰어 (v{APP_VERSION}) — 일상경비교부액"
 
 
@@ -484,9 +484,11 @@ class ColumnFilterPopup(QWidget):
         self.scroll.setWidget(self.inner)
 
         self.layout.addWidget(self.scroll, 1)
+        self.inner_layout.setAlignment(Qt.AlignTop)
 
     def adjust_height(self, count: int):
-        h = min(count * 28 + 60, 420)
+        # 💡 [유저 요청] 빈 줄(gap) 제거를 위해 여백 최적화 (28px * count + 상단 타이틀 높이)
+        h = min(count * 28 + 48, 420)
         self.resize(220, h)
 
 class MainWindow(QMainWindow):
@@ -675,6 +677,8 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(QHeaderView.Interactive)
         header.setDefaultAlignment(Qt.AlignCenter)
         header.setStretchLastSection(False)
+        # 💡 [유저 요청] 줄바꿈된 헤더가 잘 보이지 않도록 높이 조정
+        header.setMinimumHeight(44)
 
         right_layout.addWidget(self.tree, 1)
         
@@ -889,20 +893,22 @@ class MainWindow(QMainWindow):
 
         if saved_visible is None:
             # 설정이 없는 최초 실행 시 사용자 요청 초기 노출 열 지정
-            default_visible = ["예산현액", "배부액", "교부액", "원인행위액", "지출액", "잔액"]
+            default_visible = ["예산현액", "배부액", "교부액", "원인행위액", "지출액", "잔액\n(교부액-지출액)"]
         elif isinstance(saved_visible, str): # QSettings.value() can return str for single item
             default_visible = [saved_visible]
         else:
             default_visible = list(saved_visible)
 
         for i, col in enumerate(parsed.money_columns):
-            cb = QCheckBox(col)
-            cb.setChecked(col in default_visible)
+            display_col = col if col != "잔액" else "잔액\n(교부액-지출액)"
+            cb = QCheckBox(display_col)
+            cb.setChecked(display_col in default_visible)
             cb.stateChanged.connect(self._on_col_visibility_changed)
             self.col_popup.inner_layout.addWidget(cb)
             self.chk_cols[i + 2] = cb
 
-        self.col_popup.inner_layout.addStretch(1)
+        # 💡 [유저 요청] 하단 빈 줄 제거를 위해 Stretch 제거
+        # self.col_popup.inner_layout.addStretch(1)
         self.col_popup.adjust_height(len(parsed.money_columns))
 
         self.l1_list.set_items(parsed.l1_items, default_checked=True)

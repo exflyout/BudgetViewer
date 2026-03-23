@@ -1,5 +1,5 @@
 {
-  "version": "1.6.0",
+  "version": "1.7.0",
   "url": "https://github.com/exflyout/BudgetViewer/releases/latest",
-  "release_notes": "v1.5.2 업데이트: 분류 체계 복구 및 합계 중복 오류 수정"
+  "release_notes": "v1.7.0: Balance header formula added, UI gap fixed, sub-total aggregation improved."
 }

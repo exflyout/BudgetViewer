@@ -692,6 +692,29 @@ class MainWindow(QMainWindow):
         self.spin_font.valueChanged.connect(self._schedule_refresh)
         self.btn_font_default.clicked.connect(lambda: self.spin_font.setValue(10))
 
+    def _on_col_visibility_changed(self):
+        """ 열 표시 상태가 변경되었을 때 호출: 트리 열 숨김 처리 및 설정 저장 """
+        if not self.tree.model() or not self.chk_cols:
+            return
+
+        visible_names = []
+        for col_idx, cb in self.chk_cols.items():
+            is_visible = cb.isChecked()
+            self.tree.setColumnHidden(col_idx, not is_visible)
+            if is_visible:
+                # 내부 저장용 이름 (검색용 헤더 이름과 일치시킴)
+                name = cb.text()
+                if name == "잔액":
+                    name = "잔액\n(교부액-지출액)"
+                visible_names.append(name)
+
+        # 설정(QSettings)에 현재 노출된 열 목록 저장
+        settings = QSettings("EXFlyout", "BudgetViewer")
+        settings.setValue("visible_columns", visible_names)
+        
+        # 필터 칩 업데이트 (필요시)
+        self._update_filter_chips()
+
     def _show_col_popup(self):
         pos = self.btn_col_filter.mapToGlobal(self.btn_col_filter.rect().bottomLeft())
         self.col_popup.move(pos)
@@ -892,17 +915,21 @@ class MainWindow(QMainWindow):
         saved_visible = settings.value("visible_columns", None)
 
         if saved_visible is None:
-            # 설정이 없는 최초 실행 시 사용자 요청 초기 노출 열 지정
-            default_visible = ["예산현액", "배부액", "교부액", "원인행위액", "지출액", "잔액\n(교부액-지출액)"]
-        elif isinstance(saved_visible, str): # QSettings.value() can return str for single item
+            # 💡 [유저 요청] 최초 실행 시 '배부액' 제외 노출
+            default_visible = ["예산현액", "교부액", "원인행위액", "지출액", "잔액\n(교부액-지출액)"]
+        elif isinstance(saved_visible, str):
             default_visible = [saved_visible]
         else:
             default_visible = list(saved_visible)
 
         for i, col in enumerate(parsed.money_columns):
-            display_col = col if col != "잔액" else "잔액\n(교부액-지출액)"
-            cb = QCheckBox(display_col)
-            cb.setChecked(display_col in default_visible)
+            # 💡 내부 헤더 이름 (수식 포함)
+            internal_header = col if col != "잔액" else "잔액\n(교부액-지출액)"
+            # 💡 메뉴에 표시할 이름 (요청: 수식 제외)
+            display_name = col
+
+            cb = QCheckBox(display_name)
+            cb.setChecked(internal_header in default_visible)
             cb.stateChanged.connect(self._on_col_visibility_changed)
             self.col_popup.inner_layout.addWidget(cb)
             self.chk_cols[i + 2] = cb
@@ -910,6 +937,9 @@ class MainWindow(QMainWindow):
         # 💡 [유저 요청] 하단 빈 줄 제거를 위해 Stretch 제거
         # self.col_popup.inner_layout.addStretch(1)
         self.col_popup.adjust_height(len(parsed.money_columns))
+        
+        # 즉시 가시성 설정 반영
+        self._on_col_visibility_changed()
 
         self.l1_list.set_items(parsed.l1_items, default_checked=True)
         self.code_list.set_items([(f"[{c}] {n}".strip(), c) for c, n in parsed.budget_codes], default_checked=True)
